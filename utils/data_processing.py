@@ -4,7 +4,7 @@ import pandas as pd
 
 
 class Data:
-  def __init__(self, sources, destinations, timestamps, edge_idxs, labels, game_ids):
+  def __init__(self, sources, destinations, timestamps, edge_idxs, labels, game_ids, batch_idx):
     self.sources = sources
     self.destinations = destinations
     self.timestamps = timestamps
@@ -14,12 +14,13 @@ class Data:
     self.unique_nodes = set(sources) | set(destinations)
     self.n_unique_nodes = len(self.unique_nodes)
     self.game_ids = game_ids
+    self.batch_idx = batch_idx
 
 
 def get_data_node_classification(dataset_name, use_validation=False):
   ### Load data and train val test split
   graph_df = pd.read_csv('./data/ml_{}.csv'.format(dataset_name))
-  graph_df = graph_df.sort_values('ts', ascending=True)
+  graph_df = graph_df.sort_values(['ts', 'game_id'], ascending=True) # that way same game_ids are grouped together
   edge_features = np.load('./data/ml_{}.npy'.format(dataset_name), allow_pickle=True, mmap_mode='r')
   node_features = np.load('./data/ml_{}_node.npy'.format(dataset_name), allow_pickle=True)
 
@@ -31,23 +32,29 @@ def get_data_node_classification(dataset_name, use_validation=False):
   labels = graph_df.label.values
   timestamps = graph_df.ts.values
   game_ids = graph_df.game_id.values
+  batch_idx = graph_df.batch_idx.values
 
   random.seed(2020)
 
-  train_mask = timestamps <= val_time if use_validation else timestamps <= test_time
-  test_mask = timestamps > test_time
-  val_mask = np.logical_and(timestamps <= test_time, timestamps > val_time) if use_validation else test_mask
+  val_batch_idx, test_batch_idx = list(np.quantile(graph_df.batch_idx, [0.70, 0.85]))
+  train_mask = batch_idx <= val_batch_idx if use_validation else batch_idx <= test_batch_idx
+  test_mask = batch_idx > test_batch_idx
+  val_mask = np.logical_and(batch_idx <= test_batch_idx, batch_idx > val_batch_idx) if use_validation else test_mask
 
-  full_data = Data(sources, destinations, timestamps, edge_idxs, labels)
+  #train_mask = timestamps <= val_time if use_validation else timestamps <= test_time
+  #test_mask = timestamps > test_time
+  #val_mask = np.logical_and(timestamps <= test_time, timestamps > val_time) if use_validation else test_mask
+
+  full_data = Data(sources, destinations, timestamps, edge_idxs, labels, game_ids, batch_idx)
 
   train_data = Data(sources[train_mask], destinations[train_mask], timestamps[train_mask],
-                    edge_idxs[train_mask], labels[train_mask])
+                    edge_idxs[train_mask], labels[train_mask], game_ids[train_mask], batch_idx[train_mask])
 
   val_data = Data(sources[val_mask], destinations[val_mask], timestamps[val_mask],
-                  edge_idxs[val_mask], labels[val_mask])
+                  edge_idxs[val_mask], labels[val_mask], game_ids[val_mask], batch_idx[val_mask])
 
   test_data = Data(sources[test_mask], destinations[test_mask], timestamps[test_mask],
-                   edge_idxs[test_mask], labels[test_mask])
+                   edge_idxs[test_mask], labels[test_mask], game_ids[test_mask], batch_idx[test_mask])
 
   return full_data, node_features, edge_features, train_data, val_data, test_data
 

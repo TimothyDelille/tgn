@@ -1,6 +1,30 @@
 import numpy as np
 import torch
 
+class PredictPoints(torch.nn.Module):
+  def __init__(self, dim, drop=0.3):
+    super().__init__()
+    self.W = nn.Linear(dim, dim)
+    self.final_proj = nn.Linear(dim, 1)
+    self.dropout = torch.nn.Dropout(p=drop, inplace=False) 
+
+  def forward(self, source_embedding, game_ids):
+    pred_pts = torch.zeros(source_embedding.shape[0], device=source_embedding.device)
+    for k in np.unique(game_ids):
+      mask = game_ids[game_ids == k]
+      pred_pts[mask] = self.predict_points(source_embedding[mask])
+      pred_pts = self.dropout(pred_pts)
+    return pred_pts
+
+  def predict_points(self, source_embedding):
+    proj = self.W(source_embedding) # num_players, dim
+    att = proj @ source_embedding.T
+    att = F.softmax(att, dim=-1) # num_players, num_players
+    repres = att @ source_embedding # num_players, embed_size
+    dk_points = self.final_proj(repres).squeeze(-1)
+    dk_points = F.relu(dk_points)
+    return dk_points
+
 
 class MergeLayer(torch.nn.Module):
   def __init__(self, dim1, dim2, dim3, dim4):
