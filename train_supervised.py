@@ -9,11 +9,12 @@ from pathlib import Path
 
 import torch
 import numpy as np
+from tqdm import tqdm
 
 from model.tgn import TGN
 from utils.utils import EarlyStopMonitor, get_neighbor_finder, MLP
 from utils.data_processing import compute_time_statistics, get_data_node_classification
-from evaluation.evaluation import eval_node_classification
+from evaluation.evaluation import eval_node_regression
 
 random.seed(0)
 np.random.seed(0)
@@ -166,12 +167,13 @@ for i in range(args.n_runs):
   logger.info('TGN models loaded')
   logger.info('Start training node classification task')
 
+  max_dk_points = train_data.labels.max()
   decoder = MLP(node_features.shape[1], drop=DROP_OUT)
   decoder_optimizer = torch.optim.Adam(decoder.parameters(), lr=args.lr)
   decoder = decoder.to(device)
-  decoder_loss_criterion = torch.nn.BCELoss()
+  decoder_loss_criterion = torch.nn.SmoothL1Loss()
 
-  val_aucs = []
+  val_losses = []
   train_losses = []
 
   early_stopper = EarlyStopMonitor(max_round=args.patience)
@@ -208,28 +210,29 @@ for i in range(args.n_runs):
                                                                                      NUM_NEIGHBORS)
 
       labels_batch_torch = torch.from_numpy(labels_batch).float().to(device)
-      pred = decoder(source_embedding).sigmoid()
+      pred = decoder(source_embedding) * max_dk_points
       decoder_loss = decoder_loss_criterion(pred, labels_batch_torch)
       decoder_loss.backward()
       decoder_optimizer.step()
       loss += decoder_loss.item()
     train_losses.append(loss / num_batch)
 
-    val_auc = eval_node_classification(tgn, decoder, val_data, full_data.edge_idxs, BATCH_SIZE,
-                                       n_neighbors=NUM_NEIGHBORS)
-    val_aucs.append(val_auc)
+    val_loss = eval_node_regression(tgn, decoder, val_data, full_data.edge_idxs, BATCH_SIZE,
+                                       n_neighbors=NUM_NEIGHBORS, max_dk_points=max_dk_points)
+    val_losses.append(val_loss)
 
-    pickle.dump({
-      "val_aps": val_aucs,
-      "train_losses": train_losses,
-      "epoch_times": [0.0],
-      "new_nodes_val_aps": [],
-    }, open(results_path, "wb"))
+    with open(results_path, "wb") as f:
+      pickle.dump({
+        "val_losses": val_losses,
+        "train_losses": train_losses,
+        "epoch_times": [0.0],
+        "new_nodes_val_aps": [],
+        }, f)
 
-    logger.info(f'Epoch {epoch}: train loss: {loss / num_batch}, val auc: {val_auc}, time: {time.time() - start_epoch}')
+    logger.info(f'Epoch {epoch}: train loss: {loss / num_batch}, val loss: {val_loss}, time: {time.time() - start_epoch}')
   
   if args.use_validation:
-    if early_stopper.early_stop_check(val_auc):
+    if early_stopper.early_stop_check(val_loss):
       logger.info('No improvement over {} epochs, stop training'.format(early_stopper.max_round))
       break
     else:
@@ -242,20 +245,20 @@ for i in range(args.n_runs):
     logger.info(f'Loaded the best model at epoch {early_stopper.best_epoch} for inference')
     decoder.eval()
 
-    test_auc = eval_node_classification(tgn, decoder, test_data, full_data.edge_idxs, BATCH_SIZE,
-                                        n_neighbors=NUM_NEIGHBORS)
+    test_loss = eval_node_regression(tgn, decoder, test_data, full_data.edge_idxs, BATCH_SIZE,
+                                        n_neighbors=NUM_NEIGHBORS, max_dk_points=max_dk_points)
   else:
     # If we are not using a validation set, the test performance is just the performance computed
     # in the last epoch
-    test_auc = val_aucs[-1]
+    test_loss = val_losses[-1]
     
   pickle.dump({
-    "val_aps": val_aucs,
-    "test_ap": test_auc,
+    "val_losses": val_losses,
+    "test_loss": test_loss,
     "train_losses": train_losses,
     "epoch_times": [0.0],
     "new_nodes_val_aps": [],
     "new_node_test_ap": 0,
   }, open(results_path, "wb"))
 
-  logger.info(f'test auc: {test_auc}')
+  logger.info(f'test loss: {test_loss}')

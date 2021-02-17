@@ -4,7 +4,7 @@ import pandas as pd
 
 
 class Data:
-  def __init__(self, sources, destinations, timestamps, edge_idxs, labels):
+  def __init__(self, sources, destinations, timestamps, edge_idxs, labels, game_ids):
     self.sources = sources
     self.destinations = destinations
     self.timestamps = timestamps
@@ -13,13 +13,15 @@ class Data:
     self.n_interactions = len(sources)
     self.unique_nodes = set(sources) | set(destinations)
     self.n_unique_nodes = len(self.unique_nodes)
+    self.game_ids = game_ids
 
 
 def get_data_node_classification(dataset_name, use_validation=False):
   ### Load data and train val test split
   graph_df = pd.read_csv('./data/ml_{}.csv'.format(dataset_name))
-  edge_features = np.load('./data/ml_{}.npy'.format(dataset_name))
-  node_features = np.load('./data/ml_{}_node.npy'.format(dataset_name))
+  graph_df = graph_df.sort_values('ts', ascending=True)
+  edge_features = np.load('./data/ml_{}.npy'.format(dataset_name), allow_pickle=True, mmap_mode='r')
+  node_features = np.load('./data/ml_{}_node.npy'.format(dataset_name), allow_pickle=True)
 
   val_time, test_time = list(np.quantile(graph_df.ts, [0.70, 0.85]))
 
@@ -28,6 +30,7 @@ def get_data_node_classification(dataset_name, use_validation=False):
   edge_idxs = graph_df.idx.values
   labels = graph_df.label.values
   timestamps = graph_df.ts.values
+  game_ids = graph_df.game_id.values
 
   random.seed(2020)
 
@@ -52,8 +55,9 @@ def get_data_node_classification(dataset_name, use_validation=False):
 def get_data(dataset_name, different_new_nodes_between_val_and_test=False, randomize_features=False):
   ### Load data and train val test split
   graph_df = pd.read_csv('./data/ml_{}.csv'.format(dataset_name))
-  edge_features = np.load('./data/ml_{}.npy'.format(dataset_name))
-  node_features = np.load('./data/ml_{}_node.npy'.format(dataset_name)) 
+  graph_df = graph_df.sort_values('ts', ascending=True)
+  edge_features = np.load('./data/ml_{}.npy'.format(dataset_name), allow_pickle=True, mmap_mode='r')
+  node_features = np.load('./data/ml_{}_node.npy'.format(dataset_name), allow_pickle=True) 
     
   if randomize_features:
     node_features = np.random.rand(node_features.shape[0], node_features.shape[1])

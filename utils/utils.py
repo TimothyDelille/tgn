@@ -17,7 +17,6 @@ class MergeLayer(torch.nn.Module):
     h = self.act(self.fc1(x))
     return self.fc2(h)
 
-
 class MLP(torch.nn.Module):
   def __init__(self, dim, drop=0.3):
     super().__init__()

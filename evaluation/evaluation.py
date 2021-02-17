@@ -1,9 +1,9 @@
 import math
-
+import torch.nn.functional as F
 import numpy as np
 import torch
 from sklearn.metrics import average_precision_score, roc_auc_score
-
+from tqdm import tqdm
 
 def eval_edge_prediction(model, negative_edge_sampler, data, n_neighbors, batch_size=200):
   # Ensures the random sampler uses a seed for evaluation (i.e. we sample always the same
@@ -22,7 +22,7 @@ def eval_edge_prediction(model, negative_edge_sampler, data, n_neighbors, batch_
     num_test_instance = len(data.sources)
     num_test_batch = math.ceil(num_test_instance / TEST_BATCH_SIZE)
 
-    for k in range(num_test_batch):
+    for k in tqdm(range(num_test_batch)):
       s_idx = k * TEST_BATCH_SIZE
       e_idx = min(num_test_instance, s_idx + TEST_BATCH_SIZE)
       sources_batch = data.sources[s_idx:e_idx]
@@ -74,3 +74,37 @@ def eval_node_classification(tgn, decoder, data, edge_idxs, batch_size, n_neighb
 
   auc_roc = roc_auc_score(data.labels, pred_prob)
   return auc_roc
+
+def eval_node_regression(tgn, decoder, data, edge_idxs, batch_size, n_neighbors, max_dk_points):
+  pred_prob = torch.zeros(len(data.sources))
+  num_instance = len(data.sources)
+  num_batch = math.ceil(num_instance / batch_size)
+
+  with torch.no_grad():
+    decoder.eval()
+    tgn.eval()
+    pbar = tqdm(total=num_batch)
+    for k in range(num_batch):
+      s_idx = k * batch_size
+      e_idx = min(num_instance, s_idx + batch_size)
+
+      sources_batch = data.sources[s_idx: e_idx]
+      destinations_batch = data.destinations[s_idx: e_idx]
+      timestamps_batch = data.timestamps[s_idx:e_idx]
+      edge_idxs_batch = edge_idxs[s_idx: e_idx]
+
+      source_embedding, destination_embedding, _ = tgn.compute_temporal_embeddings(sources_batch,
+                                                                                   destinations_batch,
+                                                                                   destinations_batch,
+                                                                                   timestamps_batch,
+                                                                                   edge_idxs_batch,
+                                                                                   n_neighbors)
+      pred_prob_batch = decoder(source_embedding)
+      pred_prob[s_idx: e_idx] = pred_prob_batch.cpu()
+
+      pbar.update(1)
+
+  mse_loss = F.mse_loss(torch.tensor(data.labels).float(), pred_prob)
+  rmse_loss = torch.sqrt(mse_loss)
+  pbar.set_postfix(mean_val_rmse=rmse_loss)
+  return rmse_loss
